@@ -22,6 +22,12 @@ Parameters:
     AllowedPattern: '^[a-zA-Z]+[0-9a-zA-Z\-]*$'
     Default: 'redshift'
 
+  LambdaPath:
+    Description: Lambda Path.
+    Type: String
+    # Default: 's3://example/'
+    # AllowedPattern: '([a-z]|[0-9])+'
+
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -36,6 +42,11 @@ Metadata:
           default: VPC Parameters
         Parameters:
           - ParentVPCStack
+      -
+        Label:
+          default: LambdaPath Parameter
+        Parameters:
+          - LambdaPath
 
 
 Resources:
@@ -217,25 +228,9 @@ Resources:
 
     Properties:
       Handler: lambda_function.lambda_handler
-      # Code:
-      CodeUri: s3://test-vpc-s3bucket-1j1h1sor403y/lambda.zip
-        # !Join [
-        #     "", [
-        #     "s3://",
-        #     !Sub '${ParentVPCStack}-S3Bucket',
-        #     "/lambda.zip"
-        #     ]
-        #   ]
-          # Bucket: "s3://test-vpc-S3Bucket "
-          # Key: "/lambda.zip
-          # Bucket: !Join [
-          #   "", [
-          #   "s3://",
-          #   !Sub '${ParentVPCStack}-S3Bucket',
-          #   ]
-          # ]
-          # # Bucket: "s3://test-vpc-S3Bucket "
-          # Key: "/lambda.zip"
+      CodeUri:
+        Bucket: !Sub '${LambdaPath}'
+        Key: "lambda.zip"
       Runtime: python3.7
       Timeout: 120
       # Tracing: Active

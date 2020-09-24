@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+
+_CLEANUP="${1:-no}"
 export AWS_PROFILE="bi-use1"
 export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-west-2}
 export CLOUD_FORMATION_STACK_NAME_VPC=${CLOUD_FORMATION_STACK_NAME_VPC:-"test-vpc"}
@@ -64,28 +66,42 @@ upload_lambda_to_s3(){
 
 #### functions
 
-main() {
+_deploy() {
     cd "$(dirname $0)"
-    # echoinfo "Executing CloudFormation Stack in ${AWS_DEFAULT_REGION} with AWS Profile [${AWS_PROFILE}]" \
-    # && echoinfo "Deploying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_VPC} ] VPC" \
-    # && aws cloudformation deploy --template-file vpc.template \
-    #     --stack-name ${CLOUD_FORMATION_STACK_NAME_VPC} \
-    # && echoinfo "Deploying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_VPC} ] RedShift" \
-    # && aws cloudformation deploy --template-file redshift.template \
-    #     --stack-name ${CLOUD_FORMATION_STACK_NAME_RS} \
-    #     --parameter-overrides ParentVPCStack=${CLOUD_FORMATION_STACK_NAME_VPC}  MasterUserPassword=${MasterUserPassword} \
-    # && upload_lambda_to_s3 \
-    echo && aws cloudformation deploy --template-file kinesis.template \
+    echoinfo "Executing CloudFormation Stack in ${AWS_DEFAULT_REGION} with AWS Profile [${AWS_PROFILE}]" \
+    && echoinfo "Deploying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_VPC} ] VPC" \
+    && aws cloudformation deploy --template-file vpc.template \
+        --stack-name ${CLOUD_FORMATION_STACK_NAME_VPC} \
+    && echoinfo "Deploying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_RS} ] RedShift" \
+    && aws cloudformation deploy --template-file redshift.template \
+        --stack-name ${CLOUD_FORMATION_STACK_NAME_RS} \
+        --parameter-overrides ParentVPCStack=${CLOUD_FORMATION_STACK_NAME_VPC}  MasterUserPassword=${MasterUserPassword} \
+    && upload_lambda_to_s3 \
+    && aws cloudformation deploy --template-file kinesis.template \
         --stack-name ${CLOUD_FORMATION_STACK_NAME_KINESIS} \
-        --parameter-overrides ParentRedshiftStack=${CLOUD_FORMATION_STACK_NAME_RS} ParentVPCStack=${CLOUD_FORMATION_STACK_NAME_VPC}  MasterUserPassword=${MasterUserPassword} --capabilities CAPABILITY_IAM
-
-    # aws cloudformation set-stack-policy --stack-name ${CLOUD_FORMATION_STACK_NAME_RS} \
-    # --stack-policy-body file://redshift_stack_policy.json \
-
-        # ParentRedshiftStack=${CLOUD_FORMATION_STACK_NAME_VPC} MasterUserPassword=$(date +%s | sha256sum | base64 | head -c 32 )
-
+        --parameter-overrides ParentRedshiftStack=${CLOUD_FORMATION_STACK_NAME_RS} ParentVPCStack=${CLOUD_FORMATION_STACK_NAME_VPC}  MasterUserPassword=${MasterUserPassword} LambdaPath=${S3_BUCKET_NAME} --capabilities CAPABILITY_IAM
 
 }
 
+_wipe() {
+    echoinfo "!DESTROYING CloudFormation Stack in ${AWS_DEFAULT_REGION} with AWS Profile [${AWS_PROFILE}]" \
+    && echoinfo "Destroying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_VPC} ] VPC" \
+    && aws cloudformation delete-stack  \
+        --stack-name ${CLOUD_FORMATION_STACK_NAME_VPC}
+    echoinfo "Destroying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_RS} ] RedShift" \
+    && aws cloudformation delete-stack \
+        --stack-name ${CLOUD_FORMATION_STACK_NAME_RS}
+    echoinfo "Destroying CloudFormation Stack [${CLOUD_FORMATION_STACK_NAME_KINESIS} ] RedShift" \
+    && aws cloudformation delete-stack \
+        --stack-name ${CLOUD_FORMATION_STACK_NAME_KINESIS}
+}
+
+main(){
+    if [[ "${_CLEANUP}" = "yes" ]];then
+        _wipe
+    else
+        _deploy
+    fi
+}
 ###  Execution
 main
