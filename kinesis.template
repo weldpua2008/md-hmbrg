@@ -1,0 +1,304 @@
+#
+# Better to use IAM auth in Lambda
+#
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'CloudFormation Template to create Amazon Kinesis Streams.'
+
+Parameters:
+  ParentVPCStack:
+    Description: 'Provide Stack name of parent VPC stack. Refer Cloudformation dashboard in AWS Console to get this.'
+    Type: String
+    MinLength: '1'
+    MaxLength: '128'
+    AllowedPattern: '^[a-zA-Z]+[0-9a-zA-Z\-]*$'
+    Default: 'vpc-3az'
+
+  ParentRedshiftStack:
+    Description: 'Provide Stack name of parent Redshift stack. Refer Cloudformation dashboard in AWS Console to get this.'
+    Type: String
+    MinLength: '1'
+    MaxLength: '128'
+    AllowedPattern: '^[a-zA-Z]+[0-9a-zA-Z\-]*$'
+    Default: 'redshift'
+
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: Redshift Parameters
+        Parameters:
+          - ParentRedshiftStack
+      -
+        Label:
+          default: VPC Parameters
+        Parameters:
+          - ParentVPCStack
+
+
+Resources:
+
+  # S3Bucket:
+  #   Type: AWS::S3::Bucket
+  #   Properties:
+  #     VersioningConfiguration:
+  #       Status: Enabled
+#
+  # DeliveryRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Sid: ''
+  #           Effect: Allow
+  #           Principal:
+  #             Service: firehose.amazonaws.com
+  #           Action: 'sts:AssumeRole'
+  #           Condition:
+  #             StringEquals:
+  #               'sts:ExternalId': !Ref 'AWS::AccountId'
+  # DeliveryPolicy:
+  #   Type: AWS::IAM::Policy
+  #   Properties:
+  #     PolicyName: firehose_delivery_policy
+  #     PolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Action:
+  #             - 's3:AbortMultipartUpload'
+  #             - 's3:GetBucketLocation'
+  #             - 's3:GetObject'
+  #             - 's3:ListBucket'
+  #             - 's3:ListBucketMultipartUploads'
+  #             - 's3:PutObject'
+  #           Resource:
+  #
+  #             - !Join [ "", [
+  #               "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'}
+  #               ]
+  #             ]
+  #             - !Join [ "", [
+  #               "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
+  #               "*"
+  #               ]
+  #             ]
+  #             # - !Sub 'arn:aws:s3:::${S3Bucket}'
+  #             # - !Sub 'arn:aws:s3:::${S3Bucket}*'
+  #
+  #     Roles:
+  #       - !Ref DeliveryRole
+#
+#
+  # InvokeLambdaPolicy:
+  #   Type: AWS::IAM::Policy
+  #   Properties:
+  #     PolicyName: firehose_lambda_policy
+  #     PolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Action:
+  #             - 'lambda:InvokeFunction'
+  #           # Resource:
+  #           #   - !GetAtt ProcessLambdaFunction.Arn
+  #     Roles:
+  #       - !Ref DeliveryRole
+#
+  # DeliveryStream:
+  #   Type: AWS::KinesisFirehose::DeliveryStream
+  #   Properties:
+  #     ExtendedS3DestinationConfiguration:
+  #       BucketARN:
+  #         - !Join [ "", [
+  #             "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
+  #             "*"
+  #             ]
+  #           ]
+  #       # BucketARN: !Sub 'arn:aws:s3:::${S3Bucket}'
+  #       BufferingHints:
+  #         IntervalInSeconds: 60
+  #         SizeInMBs: 50
+  #       CompressionFormat: UNCOMPRESSED
+  #       Prefix: firehose/
+  #       RoleARN: !GetAtt DeliveryRole.Arn
+  #       ProcessingConfiguration:
+  #         Enabled: true
+  #         Processors:
+  #           - Parameters:
+  #               - ParameterName: LambdaArn
+  #                 ParameterValue: !GetAtt ProcessLambdaFunction.Arn
+  #             Type: Lambda
+#
+  # ProcessLambdaExecutionRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #       - Effect: Allow
+  #         Principal:
+  #           Service:
+  #           - lambda.amazonaws.com
+  #         Action:
+  #         - sts:AssumeRole
+  #     Policies:
+  #       - PolicyName: allowLambdaLogs
+  #         PolicyDocument:
+  #           Version: '2012-10-17'
+  #           Statement:
+  #           - Effect: Allow
+  #             Action:
+  #             - logs:*
+  #             Resource: arn:aws:logs:*:*:*
+#
+  EventStream:
+    Type: 'AWS::Kinesis::Stream'
+    Properties:
+      Name: EventStream
+      RetentionPeriodHours: 24
+      ShardCount: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-EventStream-${AWS::Region}
+
+  EventConsumer:
+    Type: 'AWS::Kinesis::StreamConsumer'
+    Properties:
+      ConsumerName: !Sub ${AWS::StackName}-EventConsumer-${AWS::Region}
+      StreamARN: !GetAtt EventStream.Arn
+
+  ProcessLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: arn:aws:logs:*:*:*
+
+  # ProcessLambdaFunction:
+  #   Type: AWS::Lambda::Function
+  #   Properties:
+  #     Code:
+  #         Bucket: !Join [
+  #           "", [
+  #           "s3://",
+  #           {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
+  #           ]
+  #         ]
+  #         Key: "/lambda.zip"
+  #     Handler: index.handler
+  #     Role: !GetAtt ProcessLambdaExecutionRole.Arn
+  #     Runtime: python3.7
+  #     Timeout: 60
+  #     MemorySize: 128
+
+
+  ProcessLambdaFunction:
+    Type: AWS::Serverless::Function
+    # Type: AWS::Lambda::Function
+
+    Properties:
+      Handler: lambda_function.lambda_handler
+      # Code:
+      CodeUri: s3://test-vpc-s3bucket-1j1h1sor403y/lambda.zip
+        # !Join [
+        #     "", [
+        #     "s3://",
+        #     !Sub '${ParentVPCStack}-S3Bucket',
+        #     "/lambda.zip"
+        #     ]
+        #   ]
+          # Bucket: "s3://test-vpc-S3Bucket "
+          # Key: "/lambda.zip
+          # Bucket: !Join [
+          #   "", [
+          #   "s3://",
+          #   !Sub '${ParentVPCStack}-S3Bucket',
+          #   ]
+          # ]
+          # # Bucket: "s3://test-vpc-S3Bucket "
+          # Key: "/lambda.zip"
+      Runtime: python3.7
+      Timeout: 120
+      # Tracing: Active
+      # Environment:
+      #   Variables:
+      #       - CLUSTER_REGION=${AWS::Region}
+      Role: !GetAtt ProcessLambdaExecutionRole.Arn
+  #
+  #     # Events:
+  #     #   Stream:
+  #     #     Type: Kinesis
+  #     #     Properties:
+  #     #       Stream: !GetAtt EventConsumer.ConsumerARN
+  #     #       StartingPosition: LATEST
+  #     #       BatchSize: 100
+  # Policies:
+  #   - !GetAtt ProcessLambdaExecutionRole.Arn
+  #   - Version: '2012-10-17'
+  #     Statement:
+  #       - Effect: Allow
+  #         Action:
+  #           - s3:GetObject
+  #           - s3:GetObjectACL
+  #         Resource:
+  #           - !Join [ "", [
+  #                 "arn:aws:s3:::",
+  #                 {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
+  #                 "*"
+  #                 ]
+  #               ]
+  #           - !Join [ "", [
+  #                 "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'}
+  #                 ]
+  #               ]
+            # - !Sub 'arn:aws:s3:::${S3Bucket}'
+            # - !Sub 'arn:aws:s3:::${S3Bucket}*'
+#   stream:
+#     Type: "AWS::Kinesis::Stream"
+#     Properties:
+#       ShardCount: 1
+#   streamConsumer:
+#     Type: "AWS::Kinesis::StreamConsumer"
+#     Properties:
+#       StreamARN: !GetAtt stream.Arn
+#       ConsumerName: "TestConsumer"
+#
+#
+Outputs:
+#   FunctionName:
+#     Description: "Function name"
+#     Value: !Ref function
+  # StreamARN:
+  #   Description: "Stream ARN"
+  #   Value: !GetAtt stream.Arn
+  # ConsumerARN:
+  #   Description: "Stream consumer ARN"
+  #   Value: !GetAtt .ConsumerARN
+
+  # EventStream:
+  #   Description: A reference to the Kinesis Stream containing all events from reactive application.
+  #   Value: !Ref EventStream
+  #
+  #
+  EventConsumer:
+    Description: A reference to the EventConsumer for HTTP/2 support
+    Value: !Ref EventConsumer
