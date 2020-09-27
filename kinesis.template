@@ -25,9 +25,6 @@ Parameters:
   LambdaPath:
     Description: Lambda Path.
     Type: String
-    # Default: 's3://example/'
-    # AllowedPattern: '([a-z]|[0-9])+'
-
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -51,7 +48,7 @@ Metadata:
 
 Resources:
 
-  # S3Bucket:
+  # DataBucket:
   #   Type: AWS::S3::Bucket
   #   Properties:
   #     VersioningConfiguration:
@@ -71,37 +68,30 @@ Resources:
   #           Condition:
   #             StringEquals:
   #               'sts:ExternalId': !Ref 'AWS::AccountId'
-  # DeliveryPolicy:
-  #   Type: AWS::IAM::Policy
-  #   Properties:
-  #     PolicyName: firehose_delivery_policy
-  #     PolicyDocument:
-  #       Version: 2012-10-17
-  #       Statement:
-  #         - Effect: Allow
-  #           Action:
-  #             - 's3:AbortMultipartUpload'
-  #             - 's3:GetBucketLocation'
-  #             - 's3:GetObject'
-  #             - 's3:ListBucket'
-  #             - 's3:ListBucketMultipartUploads'
-  #             - 's3:PutObject'
-  #           Resource:
-  #
-  #             - !Join [ "", [
-  #               "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'}
-  #               ]
-  #             ]
-  #             - !Join [ "", [
-  #               "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
-  #               "*"
-  #               ]
-  #             ]
-  #             # - !Sub 'arn:aws:s3:::${S3Bucket}'
-  #             # - !Sub 'arn:aws:s3:::${S3Bucket}*'
-  #
-  #     Roles:
-  #       - !Ref DeliveryRole
+  DeliveryPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: firehose_delivery_policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:AbortMultipartUpload'
+              - 's3:GetBucketLocation'
+              - 's3:GetObject'
+              - 's3:ListBucket'
+              - 's3:ListBucketMultipartUploads'
+              - 's3:PutObject'
+            Resource:
+              - Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "DataBucketArn" ] ]
+              - !Sub
+                - ${ValueFromBaseStack}/*
+                - ValueFromBaseStack:
+                    Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "DataBucketArn" ] ]
+
+      Roles:
+        - !Ref DeliveryRole
 #
 #
   # InvokeLambdaPolicy:
@@ -119,30 +109,6 @@ Resources:
   #     Roles:
   #       - !Ref DeliveryRole
 #
-  # DeliveryStream:
-  #   Type: AWS::KinesisFirehose::DeliveryStream
-  #   Properties:
-  #     ExtendedS3DestinationConfiguration:
-  #       BucketARN:
-  #         - !Join [ "", [
-  #             "arn:aws:s3:::", {'Fn::ImportValue': !Sub '${ParentVPCStack}-S3Bucket'},
-  #             "*"
-  #             ]
-  #           ]
-  #       # BucketARN: !Sub 'arn:aws:s3:::${S3Bucket}'
-  #       BufferingHints:
-  #         IntervalInSeconds: 60
-  #         SizeInMBs: 50
-  #       CompressionFormat: UNCOMPRESSED
-  #       Prefix: firehose/
-  #       RoleARN: !GetAtt DeliveryRole.Arn
-  #       ProcessingConfiguration:
-  #         Enabled: true
-  #         Processors:
-  #           - Parameters:
-  #               - ParameterName: LambdaArn
-  #                 ParameterValue: !GetAtt ProcessLambdaFunction.Arn
-  #             Type: Lambda
 #
   # ProcessLambdaExecutionRole:
   #   Type: AWS::IAM::Role
@@ -165,7 +131,51 @@ Resources:
   #             Action:
   #             - logs:*
   #             Resource: arn:aws:logs:*:*:*
-#
+  DeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: FirehoseDeliveryRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ""
+            Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": !Ref "AWS::AccountId"
+      Policies:
+          - PolicyName: personalizeEventsPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - kinesis:*
+                    - s3:*
+                    - kms:*
+                    - logs:*
+                    - lambda:*
+                  Resource:
+                    - "*"
+              # Resource: { Fn::GetAtt: [ sourceDynamoDbTable, StreamArn ] }
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: EventStream
+      RetentionInDays: 30
+  CloudWatchLogStream:
+    Type: AWS::Logs::LogStream
+    DependsOn:
+      - CloudWatchLogGroup
+    Properties:
+      LogGroupName: EventStream
+      LogStreamName: S3Delivery
+
+
   EventStream:
     Type: 'AWS::Kinesis::Stream'
     Properties:
@@ -175,6 +185,52 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName}-EventStream-${AWS::Region}
+
+  FirehoseDeliveryStream:
+    DependsOn:
+      - DeliveryPolicy
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+        DeliveryStreamName: "EventStream"
+        DeliveryStreamType: "KinesisStreamAsSource"
+        KinesisStreamSourceConfiguration:
+            KinesisStreamARN: !GetAtt EventStream.Arn
+            RoleARN: !GetAtt DeliveryRole.Arn
+        RedshiftDestinationConfiguration:
+            CloudWatchLoggingOptions:
+                Enabled: true
+                LogGroupName: !Ref CloudWatchLogGroup  #"/aws/kinesisfirehose/EventStream"
+                LogStreamName: !Ref CloudWatchLogStream  # "KinesisFirehose2RedshiftDelivery"
+            ClusterJDBCURL:
+                Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "RedshiftClusterJDBCURL" ] ]
+            CopyCommand:
+                DataTableName: "events"
+                DataTableColumns: "environment,user_account_id,request_timestamp,referrer,website_id,topic,location,request_id,message,cookie_id,user_agent"
+                CopyOptions: "json 'auto' TRUNCATECOLUMNS blanksasnull emptyasnull"
+            ProcessingConfiguration:
+                Enabled: false
+            RoleARN: !GetAtt DeliveryRole.Arn
+            S3Configuration:
+                BucketARN: #!Sub 'arn:aws:s3:::${DataBucket}'
+                    Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "DataBucketArn" ] ]
+
+                BufferingHints:
+                  IntervalInSeconds: 60
+                  SizeInMBs: 50
+                CloudWatchLoggingOptions:
+                    Enabled: true
+                    LogGroupName: !Ref CloudWatchLogGroup  #"/aws/kinesisfirehose/EventStream"
+                    LogStreamName: !Ref CloudWatchLogStream  # "KinesisFirehose2RedshiftDelivery"
+                    # CompressionFormat: UNCOMPRESSED
+                EncryptionConfiguration:
+                    NoEncryptionConfig: "NoEncryption"
+                Prefix: "events"
+                RoleARN: !GetAtt DeliveryRole.Arn
+            Username:
+                Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "RedshiftUsername" ] ]
+            Password:
+                Fn::ImportValue: !Join [ "-", [ !Ref "ParentRedshiftStack", "MasterUserPassword" ] ]
+
 
   EventConsumer:
     Type: 'AWS::Kinesis::StreamConsumer'

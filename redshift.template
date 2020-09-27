@@ -20,7 +20,7 @@ Parameters:
   RedshiftClusterPort:
     Description: The port number on which the cluster accepts incoming connections.
     Type: Number
-    Default: '8200'
+    Default: '5439'
 
   NumberOfNodes:
     Description: >-
@@ -315,6 +315,43 @@ Mappings:
     sa-east-1:
       RSAccountID: 075028567923
 
+  KinesisDataFirehoseMap:
+    us-east-1:
+      CIDR: 52.70.63.192/27
+    us-east-2:
+      CIDR: 13.58.135.96/27
+    us-west-1:
+      CIDR: 13.57.135.192/27
+    us-west-2:
+      CIDR: 52.89.255.224/27
+    ap-east-1:
+      CIDR: 18.162.221.32/27
+    ap-south-1:
+      CIDR: 13.232.67.32/27
+    ap-northeast-2:
+      CIDR: 13.209.1.64/27
+    ap-southeast-1:
+      CIDR: 13.228.64.192/27
+    ap-southeast-2:
+      CIDR: 13.210.67.224/27
+    ap-northeast-1:
+      CIDR: 13.113.196.224/27
+    ca-central-1:
+      CIDR: 35.183.92.128/27
+    eu-west-1:
+      CIDR: 52.19.239.192/27
+    eu-central-1:
+      CIDR: 35.158.127.160/27
+    eu-west-2:
+      CIDR: 18.130.1.96/27
+    eu-west-3:
+      CIDR: 35.180.1.96/27
+    eu-north-1:
+      CIDR: 13.53.63.224/27
+    sa-east-1:
+      CIDR: 18.228.1.128/27
+
+
 Conditions:
   RedshiftSingleNodeClusterCondition:
     Fn::Equals:
@@ -345,6 +382,11 @@ Conditions:
       - Ref: SnapshotAccountNumber
 
 Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
 
   RedshiftSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
@@ -357,6 +399,24 @@ Resources:
             ToPort: !Ref RedshiftClusterPort
             CidrIp: {'Fn::ImportValue': !Sub '${ParentVPCStack}-CidrBlock'}
             Description: 'Redshift Access to VPC CIDR'
+          # https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html#using-iam-rs-vpc
+
+          - IpProtocol: tcp
+            FromPort: !Ref RedshiftClusterPort
+            ToPort: !Ref RedshiftClusterPort
+            CidrIp: "52.89.255.224/27"
+            Description: 'VPC Access to an Amazon Redshift Cluster for firehose'
+          - IpProtocol: tcp
+            FromPort: !Ref RedshiftClusterPort
+            ToPort: !Ref RedshiftClusterPort
+            CidrIp: "0.0.0.0/0"
+            Description: 'VPC Access to an Amazon Redshift Cluster for all'
+          - IpProtocol: "-1"
+            FromPort: !Ref RedshiftClusterPort
+            ToPort: !Ref RedshiftClusterPort
+            CidrIp: "0.0.0.0/0"
+            Description: 'VPC Access to an Amazon Redshift Cluster for all any proto'
+
           - !Ref 'AWS::NoValue'
       Tags:
         -
@@ -716,6 +776,19 @@ Outputs:
                - ' -d '
                - !Ref DatabaseName
 
+  RedshiftClusterJDBCURL:
+    Description: ClusterJDBCURL DSN
+    Value: !Join
+             - ''
+             - - 'jdbc:redshift://'
+               - !GetAtt 'RedshiftCluster.Endpoint.Address'
+               - ':'
+               - !GetAtt 'RedshiftCluster.Endpoint.Port'
+               - '/'
+               - !Ref DatabaseName
+    Export:
+      Name: !Sub '${AWS::StackName}-RedshiftClusterJDBCURL'
+
   RedshiftParameterGroupName:
     Description: Name of the Redshift Parameter Group
     Value: !Ref RedshiftClusterParameterGroup
@@ -735,6 +808,13 @@ Outputs:
     Value: !Ref MasterUsername
     Export:
       Name: !Sub '${AWS::StackName}-RedshiftUsername'
+
+  MasterUserPassword:
+    Description: The password that is associated with the master user account for
+      the cluster that is being created.
+    Value: !Ref MasterUserPassword
+    Export:
+      Name: !Join [ "-", [ !Ref "AWS::StackName", "MasterUserPassword" ] ]
 
   RedshiftLoggingS3Bucket:
     Description: Amazon S3 bucket created for audit logging
@@ -756,3 +836,13 @@ Outputs:
     Value: !Ref GlueCatalogDB
     Export:
       Name: !Sub '${AWS::StackName}-GlueCatalogDBName'
+  DataBucket:
+    Description: The bucket from which files are loaded into Redshift.
+    Value: !Ref DataBucket
+    Export:
+      Name: !Join [ "-", [ !Ref "AWS::StackName", "DataBucket" ] ]
+  DataBucketArn:
+    Description: The bucket from which files are loaded into Redshift.
+    Value: !GetAtt DataBucket.Arn
+    Export:
+      Name: !Join [ "-", [ !Ref "AWS::StackName", "DataBucketArn" ] ]

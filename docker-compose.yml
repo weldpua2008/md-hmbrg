@@ -1,0 +1,10 @@
+version: '3'
+services:
+  kinesis-producer:
+    build: docker-images/kinesis-producer/
+    environment:
+      - "AWS_PROFILE=us-west-2"
+    volumes:
+      # override credentials
+      - "~/.aws/:/root/.aws/"
+      - "./docker-images/kinesis-producer/kinesis_producer.py:/usr/src/app/kinesis_producer.py"
